@@ -1,0 +1,356 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Taller Mobile-Responsive Team Visualization</title>
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 10px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            background-color: #f0f0f0;
+            font-size: 16px;
+            min-height: 100vh;
+        }
+        #visualization {
+            width: 100%;
+            height: 80vh;
+            min-height: 500px;
+            background-color: white;
+            border-radius: 10px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+            margin-bottom: 20px;
+            overflow: hidden;
+        }
+        .link {
+            stroke: #999;
+            stroke-opacity: 0.6;
+            stroke-width: 2px;
+        }
+        .node circle {
+            stroke: #fff;
+            stroke-width: 2px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+        }
+        .node:hover circle {
+            stroke: #000;
+            stroke-width: 3px;
+        }
+        .node text {
+            font-size: 12px;
+            fill: #fff;
+            text-anchor: middle;
+            pointer-events: none;
+        }
+        #controls, #stats {
+            width: 100%;
+            max-width: 600px;
+            margin-bottom: 20px;
+            padding: 10px;
+            background-color: white;
+            border-radius: 5px;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+            box-sizing: border-box;
+        }
+        #addTeamForm {
+            display: none;
+            position: fixed;
+            left: 50%;
+            top: 50%;
+            transform: translate(-50%, -50%);
+            background-color: white;
+            border: 1px solid #ccc;
+            padding: 20px;
+            border-radius: 5px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.2);
+            z-index: 1000;
+            width: 90%;
+            max-width: 300px;
+        }
+        input, button {
+            margin: 5px 0;
+            padding: 10px;
+            width: 100%;
+            box-sizing: border-box;
+            font-size: 16px;
+        }
+        @media (max-width: 600px) {
+            body {
+                padding: 5px;
+                font-size: 14px;
+            }
+            #visualization {
+                height: 70vh;
+                min-height: 400px;
+            }
+            .node text {
+                font-size: 8px;
+            }
+            #stats, #controls {
+                font-size: 14px;
+            }
+            input, button {
+                font-size: 14px;
+                padding: 8px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div id="stats"></div>
+    <div id="controls">
+        <button onclick="showAddTeamForm()">Add Team Member</button>
+    </div>
+    <div id="visualization"></div>
+    <div id="addTeamForm">
+        <h3>Add New Team Member</h3>
+        <label for="parentId">Parent ID:</label>
+        <input type="text" id="parentId" readonly><br>
+        <label for="investment">Investment Amount (USDT):</label>
+        <input type="number" id="investment" min="500" value="500"><br>
+        <button onclick="addTeamMember()">Add</button>
+        <button onclick="cancelAdd()">Cancel</button>
+    </div>
+
+    <script>
+        let width, height, svg, g, simulation;
+        const color = d3.scaleOrdinal(d3.schemeCategory10);
+
+        let graph = {
+            nodes: [],
+            links: []
+        };
+
+        function initializeVisualization() {
+            const container = document.getElementById('visualization');
+            width = container.clientWidth;
+            height = container.clientHeight;
+
+            svg = d3.select("#visualization")
+                .append("svg")
+                .attr("width", width)
+                .attr("height", height);
+
+            g = svg.append("g");
+
+            svg.call(d3.zoom()
+                .extent([[0, 0], [width, height]])
+                .scaleExtent([0.1, 4])
+                .on("zoom", zoomed));
+
+            simulation = d3.forceSimulation()
+                .force("link", d3.forceLink().id(d => d.id).distance(80))
+                .force("charge", d3.forceManyBody().strength(-400))
+                .force("center", d3.forceCenter(width / 2, height / 2))
+                .force("collision", d3.forceCollide().radius(d => getNodeRadius(d) + 10));
+
+            updateVisualization();
+        }
+
+        function zoomed({transform}) {
+            g.attr("transform", transform);
+        }
+
+        function getNodeRadius(d) {
+            return d.id === "Manager" ? 40 : 30;
+        }
+
+        function updateVisualization() {
+            g.selectAll("*").remove();
+
+            const link = g.append("g")
+                .attr("class", "links")
+                .selectAll("line")
+                .data(graph.links)
+                .enter().append("line")
+                .attr("class", "link");
+
+            const node = g.append("g")
+                .attr("class", "nodes")
+                .selectAll(".node")
+                .data(graph.nodes)
+                .enter().append("g")
+                .attr("class", "node")
+                .call(d3.drag()
+                    .on("start", dragstarted)
+                    .on("drag", dragged)
+                    .on("end", dragended))
+                .on("click", handleNodeClick);
+
+            node.append("circle")
+                .attr("r", d => getNodeRadius(d))
+                .attr("fill", d => color(d.group));
+
+            node.append("text")
+                .attr("class", "id")
+                .attr("dy", "-0.5em")
+                .text(d => d.id);
+
+            node.append("text")
+                .attr("class", "investment")
+                .attr("dy", "1em")
+                .text(d => `$${d.investment}`);
+
+            simulation.nodes(graph.nodes).on("tick", ticked);
+            simulation.force("link").links(graph.links);
+            simulation.alpha(1).restart();
+
+            function ticked() {
+                link
+                    .attr("x1", d => d.source.x)
+                    .attr("y1", d => d.source.y)
+                    .attr("x2", d => d.target.x)
+                    .attr("y2", d => d.target.y);
+
+                node.attr("transform", d => `translate(${d.x},${d.y})`);
+            }
+
+            updateStats();
+        }
+
+        function dragstarted(event, d) {
+            if (!event.active) simulation.alphaTarget(0.3).restart();
+            d.fx = d.x;
+            d.fy = d.y;
+        }
+
+        function dragged(event, d) {
+            d.fx = event.x;
+            d.fy = event.y;
+        }
+
+        function dragended(event, d) {
+            if (!event.active) simulation.alphaTarget(0);
+            d.fx = null;
+            d.fy = null;
+        }
+
+        function handleNodeClick(event, d) {
+            if (getChildCount(d.id) >= 5) {
+                alert("This team already has the maximum of 5 members.");
+                return;
+            }
+            showAddTeamForm(d.id);
+        }
+
+        function showAddTeamForm(parentId = null) {
+            const form = document.getElementById("addTeamForm");
+            form.style.display = "block";
+            document.getElementById("parentId").value = parentId || "";
+            if (!parentId) {
+                document.querySelector("label[for='parentId']").style.display = "none";
+                document.getElementById("parentId").style.display = "none";
+            } else {
+                document.querySelector("label[for='parentId']").style.display = "inline";
+                document.getElementById("parentId").style.display = "inline";
+            }
+        }
+
+        function addTeamMember() {
+            const parentId = document.getElementById("parentId").value;
+            const investment = parseInt(document.getElementById("investment").value);
+            
+            if (isNaN(investment) || investment < 500) {
+                alert("Please enter a valid investment amount (minimum 500 USDT)");
+                return;
+            }
+
+            let newId, group;
+            if (!parentId) {
+                if (graph.nodes.length > 0) {
+                    alert("Manager already exists.");
+                    return;
+                }
+                newId = "Manager";
+                group = 0;
+            } else {
+                const parent = graph.nodes.find(n => n.id === parentId);
+                if (!parent) {
+                    alert("Invalid parent ID.");
+                    return;
+                }
+                newId = getNewMemberId(parentId);
+                group = parent.group + 1;
+            }
+            
+            graph.nodes.push({
+                id: newId,
+                group: group,
+                investment: investment,
+                parent: parentId || null
+            });
+            
+            if (parentId) {
+                graph.links.push({source: parentId, target: newId});
+            }
+            
+            updateVisualization();
+            cancelAdd();
+        }
+
+        function getNewMemberId(parentId) {
+            const childCount = getChildCount(parentId);
+            if (parentId === "Manager") {
+                return `A${childCount + 1}`;
+            } else {
+                const parentPrefix = parentId.charAt(0);
+                const nextPrefix = String.fromCharCode(parentPrefix.charCodeAt(0) + 1);
+                return `${nextPrefix}${parentId.slice(1)}-${childCount + 1}`;
+            }
+        }
+
+        function getChildCount(parentId) {
+            return graph.nodes.filter(n => n.parent === parentId).length;
+        }
+
+        function cancelAdd() {
+            document.getElementById("addTeamForm").style.display = "none";
+        }
+
+        function updateStats() {
+            const totalMembers = graph.nodes.length - (graph.nodes.length > 0 ? 1 : 0);
+            const totalInvestment = graph.nodes.reduce((sum, node) => sum + node.investment, 0);
+            const weeklyDividend = calculateWeeklyDividend(totalMembers, totalInvestment);
+            const monthlyDividend = weeklyDividend * 4;
+
+            document.getElementById("stats").innerHTML = `
+                <strong>Total Team Members:</strong> ${totalMembers}<br>
+                <strong>Total Investment:</strong> $${totalInvestment}<br>
+                <strong>Manager's Weekly Dividend:</strong> $${weeklyDividend.toFixed(2)}<br>
+                <strong>Manager's Monthly Dividend:</strong> $${monthlyDividend.toFixed(2)}
+            `;
+        }
+
+        function calculateWeeklyDividend(teamSize, totalInvestment) {
+            let rate;
+            if (teamSize < 30) rate = 0.003;
+            else if (teamSize < 100) rate = 0.005;
+            else if (teamSize < 200) rate = 0.01;
+            else if (teamSize < 350) rate = 0.013;
+            else if (teamSize < 500) rate = 0.015;
+            else if (teamSize < 800) rate = 0.02;
+            else if (teamSize < 1500) rate = 0.023;
+            else if (teamSize < 3000) rate = 0.03;
+            else rate = 0.035;
+
+            return totalInvestment * rate;
+        }
+
+        window.addEventListener('resize', () => {
+            width = document.getElementById('visualization').clientWidth;
+            height = document.getElementById('visualization').clientHeight;
+            svg.attr("width", width).attr("height", height);
+            simulation.force("center", d3.forceCenter(width / 2, height / 2));
+            simulation.alpha(1).restart();
+        });
+
+        initializeVisualization();
+    </script>
+</body>
+</html>
